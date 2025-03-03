@@ -1,0 +1,11 @@
+# Core Requirements
+gymnasium==1.0.0
+torch
+pandas
+numpy
+tqdm
+flask
+
+# Optional
+python-dotenv
+ollama

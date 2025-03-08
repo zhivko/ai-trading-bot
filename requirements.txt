@@ -1,5 +1,5 @@
 # Core Requirements
-gymnasium==1.0.0
+gymnasium
 torch
 pandas
 numpy

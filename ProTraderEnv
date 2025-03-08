@@ -1,6 +1,16 @@
 def step(self, action):
     # Replace existing reward calculation with:
-    risk_penalty = 0.01 * abs(new_networth - old_networth)  # Penalize volatility
+    reward_scale = 10000  # Increased from 1000
+    risk_penalty = 0.01 * abs(new_networth - old_networth)  # Reduced from 0.05
+    time_bonus = 0.001 * self.trade_duration if self.position else 0  # Changed penalty to bonus
     drawdown_penalty = 0.1 * max(0, (peak_networth - new_networth)/peak_networth)
-    time_penalty = 0.001 * self.trade_duration if self.position else 0
-    reward = (new_networth - old_networth) * 100 - risk_penalty - drawdown_penalty - time_penalty 
+    
+    # Logarithmic scaling for networth changes
+    scaled_return = np.log(new_networth/old_networth) if old_networth > 0 else 0
+    reward = scaled_return * reward_scale + time_bonus - drawdown_penalty - risk_penalty 
+
+def _open_position(self, price, position_type):
+    # Use risk-adjusted position sizing
+    risk = 0.01  # 1% risk per trade
+    position_size = (self.get_networth() * risk) / (price * self.atr.iloc[self.current_step])
+    self.position_size = min(position_size, self.get_networth() * 0.5 / price) 

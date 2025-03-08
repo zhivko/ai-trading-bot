@@ -1,15 +1,61 @@
-def __init__(self, env, hidden_size=512, policy_lr=3e-4, gamma=0.99, 
-             clip_epsilon=0.2, batch_size=2048, ent_coef=0.01, gae_lambda=0.95):
-    # Increase network capacity
-    self.rnn = nn.LSTM(input_size, hidden_size, num_layers=2, dropout=0.1).to(self.device)
+def __init__(self, env, hidden_size=1024, policy_lr=1e-4, gamma=0.999, 
+             clip_epsilon=0.15, batch_size=4096, ent_coef=0.1, gae_lambda=0.98):
+    # Deeper network with skip connections
+    self.rnn = nn.LSTM(input_size, hidden_size, num_layers=3, dropout=0.2).to(self.device)
+    self.attention = nn.MultiheadAttention(hidden_size, num_heads=4).to(self.device)
     self.fc = nn.Sequential(
-        nn.Linear(hidden_size, 256),
-        nn.ReLU(),
-        nn.Linear(256, env.action_space.n)
+        nn.Linear(hidden_size*2, 512),
+        nn.GELU(),
+        nn.Linear(512, env.action_space.n)
     ).to(self.device)
+    
+    # Separate value head
+    self.value_head = nn.Sequential(
+        nn.Linear(hidden_size, 256),
+        nn.GELU(),
+        nn.Linear(256, 1)
+    ).to(self.device) 
+
     # Add learning rate scheduler
-    self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=10000) 
-def train(self, env, epsilon=0.1):
-    # In the training loop:
-    if random.random() < epsilon:
-        # Weighted random exploration
+    self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        self.optimizer, 
+        max_lr=policy_lr,
+        total_steps=total_steps,
+        pct_start=0.3
+    )
+
+def _calculate_gae(self, rewards, dones, states):
+    # Calculate values for all states
+    with torch.no_grad():
+        states = states.unsqueeze(1)
+        hidden = (torch.zeros(3, states.size(0), 1024).to(self.device),
+                 torch.zeros(3, states.size(0), 1024).to(self.device))
+        out, _ = self.rnn(states, hidden)
+        values = self.value_head(out.squeeze(1)).squeeze()
+    
+    advantages = torch.zeros_like(rewards)
+    last_advantage = 0
+    
+    for t in reversed(range(len(rewards))):
+        if t == len(rewards) - 1:
+            next_value = values[-1] if not dones[-1] else 0
+        else:
+            next_value = values[t+1]
+        
+        delta = rewards[t] + self.gamma * next_value * (1 - dones[t]) - values[t]
+        advantages[t] = delta + self.gamma * self.gae_lambda * (1 - dones[t]) * last_advantage
+        last_advantage = advantages[t]
+    
+    returns = advantages + values
+    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    return returns, advantages 
+
+def train(self, total_steps=1_000_000):
+    # Store experiences in buffer
+    self.replay_buffer = []
+    # During training:
+    if len(self.replay_buffer) > self.batch_size:
+        indices = np.random.choice(len(self.replay_buffer), self.batch_size, 
+                                  p=self.sampling_probs)
+        batch = [self.replay_buffer[i] for i in indices]
+        # Update using prioritized batch 

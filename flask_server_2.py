@@ -31,15 +31,37 @@ def index():
     networth_data = []
 
     if selected_episode:
-        trade_data = pd.read_csv(selected_episode, parse_dates=["datetime"])
-        if not trade_data.empty:
-            # Ensure data is numeric and handle NaN with modern ffill
-            trade_data['networth'] = pd.to_numeric(trade_data['networth'], errors='coerce').ffill()
-            trade_data['quantity'] = pd.to_numeric(trade_data['quantity'], errors='coerce').ffill()
-            trade_data['reward'] = pd.to_numeric(trade_data['reward'], errors='coerce').ffill()
-            trade_data = trade_data.sort_values("datetime")
+        trade_data = pd.read_csv(selected_episode)
+        
+        # Convert datetime with explicit format and handle timezones
+        trade_data['datetime'] = pd.to_datetime(
+            trade_data['datetime'],
+            utc=True,
+            format='mixed',  # Handle multiple formats
+            errors='coerce'  # Convert unparseable dates to NaT
+        )
 
+        # Drop rows with invalid datetime values
+        trade_data = trade_data.dropna(subset=['datetime'])
+        trade_data = trade_data.sort_values("datetime")
+
+        # Add debug check for remaining datetime issues
+        if trade_data['datetime'].isna().any():
+            print(f"Found {trade_data['datetime'].isna().sum()} invalid datetime entries in {selected_episode}")
+        
+        if not trade_data.empty:
+            # Get reference time as datetime object
             reference_time = trade_data["datetime"].max()
+            
+            # Convert offset to integer safely
+            try:
+                offset = int(offset)
+            except:
+                offset = 0
+
+            print(f"Reference time type: {type(reference_time)}, value: {reference_time}")
+            print(f"Offset type: {type(offset)}, value: {offset}")
+
             display_end = reference_time - pd.Timedelta(days=offset)
             display_start = display_end - pd.Timedelta(days=20)
             
@@ -134,6 +156,15 @@ def index():
                     "x": row["datetime"].isoformat(),
                     "y": row["networth"]
                 })
+
+        # Ensure numeric types when processing trade data
+        trade_data['price'] = pd.to_numeric(trade_data['price'], errors='coerce')
+        trade_data['quantity'] = pd.to_numeric(trade_data['quantity'], errors='coerce')
+        trade_data['networth'] = pd.to_numeric(trade_data['networth'], errors='coerce')
+        trade_data = trade_data.dropna(subset=['price', 'quantity', 'networth'])
+
+        print(f"Processing {selected_episode} with {len(trade_data)} valid records")
+        print("Sample datetimes:", trade_data['datetime'].head().dt.strftime('%Y-%m-%d %H:%M:%S%z').tolist())
     
     prev_offset = offset + 20
     next_offset = max(offset - 20, 0)
@@ -224,15 +255,15 @@ def index():
             y: tradeEvents.filter(te => te.action.toLowerCase() === action.toLowerCase()).map(d => d.price),
             mode: 'markers',
             marker: { 
-              size: d => Math.min(Math.sqrt(d.quantity) * 20 + 35, 50),
+              size: d => Math.min(Math.sqrt(d.quantity) * 40 + 100, 150),
               color: style.color,
               symbol: style.symbol,
-              line: { width: 1.5, color: style.color }
+              line: { width: 2.5, color: style.color }
             },
             name: style.name,
             hoverinfo: 'text',
             text: tradeEvents.filter(te => te.action.toLowerCase() === action.toLowerCase())
-              .map(d => `${style.name}<br>Price: ${d.price?.toFixed(2) || 'N/A'}<br>Qty: ${d.quantity?.toFixed(3) || '0.000'}<br>NW: ${d.networth?.toFixed(2) || 'N/A'}`)
+              .map(d => `${style.name}<br>Price: ${Number(d.price)?.toFixed(2) || 'N/A'}<br>Qty: ${Number(d.quantity)?.toFixed(3) || '0.000'}<br>NW: ${Number(d.networth)?.toFixed(2) || 'N/A'}`)
           }));
 
           var networthData = {{ networth_data|tojson }};

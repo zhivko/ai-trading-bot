@@ -17,7 +17,16 @@ class PPOTrader:
                  clip_epsilon=0.1, batch_size=512, ent_coef=0.02, gae_lambda=0.97):
         self.env = env
         self.base_env = env.env
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        torch.cuda.init()
+        print(f"CUDA initialized: {torch.cuda.is_initialized()}")
+
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        print(f"\n=== Using {self.device} ===")
+        if self.device.type == 'cuda':
+            print(f"GPU: {torch.cuda.get_device_name(0)}")
+
+        
         self.batch_size = batch_size
         
         # Define RNN (LSTM) policy network
@@ -36,18 +45,26 @@ class PPOTrader:
     def train(self, total_steps=1_000_000):
         pbar = tqdm(total=total_steps, desc="Training ProTrader")
         steps_taken = 0
+        episode_num = 0  # Track episode number
         
         self.base_env.enable_episode_saving(True)
         
         while steps_taken < total_steps:
+            episode_num += 1  # Increment episode counter
             obs, _ = self.env.reset()
             peak_networth = self.base_env.initial_balance
             epsilon = 0.5
             min_epsilon = 0.1
             epsilon_decay = 0.9995
             
+            # Update progress bar description
+            pbar.set_description(f"Episode {episode_num}")
+            
             batch_obs, batch_actions, batch_log_probs, batch_rewards, batch_dones = [], [], [], [], []
-            hidden = (torch.zeros(1, 1, 256).to(self.device), torch.zeros(1, 1, 256).to(self.device))
+            hidden = (
+                torch.zeros(1, 1, 256).to(self.device), 
+                torch.zeros(1, 1, 256).to(self.device)
+            )
             
             done = False
             while not done and steps_taken < total_steps:
@@ -87,6 +104,7 @@ class PPOTrader:
                 
                 if steps_taken % 50 == 0:
                     pbar.set_postfix({
+                        'episode': episode_num,  # Add episode to postfix
                         'networth': f'{current_networth:.2f}',
                         'peak': f'{peak_networth:.2f}',
                         'steps': steps_taken
@@ -117,6 +135,7 @@ class PPOTrader:
             
             self.base_env._save_episode()
             pbar.update(self.base_env.current_step)
+            pbar.refresh()  # Ensure display updates
         
         self.base_env._save_episode()
         pbar.close()
@@ -139,8 +158,10 @@ class PPOTrader:
 
     def _compute_loss(self, states, actions, old_log_probs, returns, advantages):
         states = states.unsqueeze(1)
-        hidden = (torch.zeros(1, states.size(0), 256).to(self.device), 
-                  torch.zeros(1, states.size(0), 256).to(self.device))
+        hidden = (
+            torch.zeros(1, states.size(0), 256).to(self.device), 
+            torch.zeros(1, states.size(0), 256).to(self.device)
+        )
         out, _ = self.rnn(states, hidden)
         logits = self.fc(out.squeeze(1))
         action_probs = self.softmax(logits)
@@ -224,6 +245,7 @@ class ProTraderEnv(Env):
         self.episode_counter = 0
         self.episode_data = []
         self.save_episodes = False
+        self.current_episode_file = None  # Track current episode file
         self.action_map = {
             0: "hold",
             1: "buy",
@@ -254,8 +276,10 @@ class ProTraderEnv(Env):
     def reset(self, seed=None, options=None):
         if len(self.episode_data) > 0 and self.save_episodes:
             self._save_episode()
-            self.episode_counter += 1
-            self.episode_data = []
+            
+        # Increment counter and reset file tracking
+        self.episode_counter += 1
+        self.current_episode_file = None
         
         self.current_step = 0
         self.balance = self.initial_balance
@@ -346,8 +370,14 @@ class ProTraderEnv(Env):
             return
             
         df = pd.DataFrame(self.episode_data)
-        episode_filename = f"episode_{self.episode_counter:04d}.csv"
-        df.to_csv(episode_filename, mode='a', header=not os.path.exists(episode_filename), index=False)
+        # Create new file at the start of each episode
+        if not self.current_episode_file:
+            self.current_episode_file = f"episode_{self.episode_counter:04d}.csv"
+            
+        # Append to current episode file
+        df.to_csv(self.current_episode_file, mode='a', 
+                 header=not os.path.exists(self.current_episode_file), 
+                 index=False)
         self.episode_data = []
 
     def _open_position(self, price, position_type):

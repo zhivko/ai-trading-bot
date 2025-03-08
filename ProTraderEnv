@@ -1,0 +1,6 @@
+def step(self, action):
+    # Replace existing reward calculation with:
+    risk_penalty = 0.01 * abs(new_networth - old_networth)  # Penalize volatility
+    drawdown_penalty = 0.1 * max(0, (peak_networth - new_networth)/peak_networth)
+    time_penalty = 0.001 * self.trade_duration if self.position else 0
+    reward = (new_networth - old_networth) * 100 - risk_penalty - drawdown_penalty - time_penalty 

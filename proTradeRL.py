@@ -594,13 +594,42 @@ def preprocess_data(file_path):
     df['volatility'] = df['atr'] / df['close']
     df['dc_width'] = (df['dc_upper'] - df['dc_lower']) / df['close']  # Normalized Donchian channel width
     
-    # Apply rolling normalization to all features
+    # Enhance RSI and stochastic representation
+    # Add RSI crossover signals and zones
+    if 'rsi' in df.columns:
+        # RSI zones (more explicit representation)
+        df['rsi_oversold'] = (df['rsi'] < 30).astype(float)  # Oversold zone
+        df['rsi_overbought'] = (df['rsi'] > 70).astype(float)  # Overbought zone
+        df['rsi_middle'] = ((df['rsi'] >= 30) & (df['rsi'] <= 70)).astype(float)  # Middle zone
+        
+        # RSI direction and momentum
+        df['rsi_direction'] = df['rsi'].diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
+        df['rsi_acceleration'] = df['rsi'].diff().diff()
+    
+    # Add stochastic features if available
+    if 'stoch_k' in df.columns and 'stoch_d' in df.columns:
+        # Stochastic crossovers
+        df['stoch_crossover'] = ((df['stoch_k'].shift(1) < df['stoch_d'].shift(1)) & 
+                                (df['stoch_k'] > df['stoch_d'])).astype(float)
+        df['stoch_crossunder'] = ((df['stoch_k'].shift(1) > df['stoch_d'].shift(1)) & 
+                                 (df['stoch_k'] < df['stoch_d'])).astype(float)
+        
+        # Stochastic zones
+        df['stoch_oversold'] = (df['stoch_k'] < 20).astype(float)
+        df['stoch_overbought'] = (df['stoch_k'] > 80).astype(float)
+    
+    # Normalize the new features
     features_to_normalize = [
-        'close', 'high', 'low', 'open',  # Price data
+        'open', 'high', 'low', 'close',  # Price data
         'atr', 'rsi', 'macd', 'signal',  # Technical indicators
         'ema_short', 'ema_long',         # Moving averages
         'dc_upper', 'dc_lower',          # Donchian channels
-        'price_change', 'volatility', 'dc_width'  # Derived features
+        'price_change', 'volatility', 'dc_width',  # Derived features
+        # New features
+        'rsi_direction', 'rsi_acceleration',
+        'stoch_crossover', 'stoch_crossunder',
+        'rsi_oversold', 'rsi_overbought', 'rsi_middle',
+        'stoch_oversold', 'stoch_overbought'
     ]
     
     # Use rolling window normalization for more realistic training
@@ -634,8 +663,22 @@ class ProTraderEnv(Env):
             'atr_norm', 'rsi_norm', 'macd_norm', 'signal_norm',  # Normalized technical indicators
             'ema_short_norm', 'ema_long_norm',                   # Normalized moving averages
             'dc_upper_norm', 'dc_lower_norm',                    # Normalized Donchian channels
-            'price_change_norm', 'volatility_norm', 'dc_width_norm'  # Normalized derived features
+            'price_change_norm', 'volatility_norm', 'dc_width_norm',  # Normalized derived features
+            # Add new RSI and stochastic features
+            'rsi_direction_norm', 'rsi_acceleration_norm',
+            'rsi_oversold_norm', 'rsi_overbought_norm', 'rsi_middle_norm'
         ]
+        
+        # Add stochastic features if available
+        stoch_features = [
+            'stoch_crossover_norm', 'stoch_crossunder_norm',
+            'stoch_oversold_norm', 'stoch_overbought_norm'
+        ]
+        
+        # Only include stochastic features if they exist in the dataframe
+        for feature in stoch_features:
+            if feature in self.df.columns:
+                self.features.append(feature)
         
         # Filter out features that don't exist in the dataframe
         self.features = [f for f in self.features if f in self.df.columns]
@@ -770,7 +813,7 @@ class ProTraderEnv(Env):
         action_mask = self._get_action_mask()
         if action_mask[action] == 0:
             # If invalid action, force to hold
-            if self.debug:
+            if self.debug or True:  # Always log invalid actions for now
                 print(f"WARNING: Invalid action {action} ({self.action_map[action]}) selected. " +
                       f"Current position: {self.position_type if self.position else 'None'}. " +
                       f"Forcing to HOLD.")
@@ -781,11 +824,17 @@ class ProTraderEnv(Env):
         action_taken = self.action_map[action]  # For logging
         
         if action == 1 and not self.position:  # Buy
-            self._open_position(current_price, 'long')
-            # Small penalty for opening a position (trading fee)
-            action_reward = -self.trading_fee * self.position_size * current_price
-            if self.debug:
-                print(f"Step {self.current_step}: BUY at {current_price} - Size: {self.position_size}")
+            # Double-check we don't already have a position (safety check)
+            if self.position_type is not None:
+                print(f"ERROR: Attempted to open long when position {self.position_type} exists. Forcing HOLD.")
+                action = 0  # Force to HOLD
+                action_taken = "hold"
+            else:
+                self._open_position(current_price, 'long')
+                # Small penalty for opening a position (trading fee)
+                action_reward = -self.trading_fee * self.position_size * current_price
+                if self.debug:
+                    print(f"Step {self.current_step}: BUY at {current_price} - Size: {self.position_size}")
             
         elif action == 2 and self.position_type == 'long':  # Close long
             profit = (current_price - self.entry_price) * self.position_size
@@ -804,11 +853,17 @@ class ProTraderEnv(Env):
                 print(f"Step {self.current_step}: CLOSE LONG at {current_price} - Profit: {profit:.2f}")
             
         elif action == 3 and not self.position:  # Sell (short)
-            self._open_position(current_price, 'short')
-            # Small penalty for opening a position (trading fee)
-            action_reward = -self.trading_fee * self.position_size * current_price
-            if self.debug:
-                print(f"Step {self.current_step}: SELL at {current_price} - Size: {self.position_size}")
+            # Double-check we don't already have a position (safety check)
+            if self.position_type is not None:
+                print(f"ERROR: Attempted to open short when position {self.position_type} exists. Forcing HOLD.")
+                action = 0  # Force to HOLD
+                action_taken = "hold"
+            else:
+                self._open_position(current_price, 'short')
+                # Small penalty for opening a position (trading fee)
+                action_reward = -self.trading_fee * self.position_size * current_price
+                if self.debug:
+                    print(f"Step {self.current_step}: SELL at {current_price} - Size: {self.position_size}")
             
         elif action == 4 and self.position_type == 'short':  # Close short
             profit = (self.entry_price - current_price) * self.position_size
@@ -915,11 +970,17 @@ class ProTraderEnv(Env):
         reward = reward * reward_scale
         
         done = self.current_step >= self.max_steps - 1
-        self._log_step(action, reward, done, action_taken)
+        
+        # Pass reward components to the logging function
+        self._log_step(action, reward, done, action_taken, 
+                      networth_change * reward_scale,
+                      action_reward * reward_scale, 
+                      market_reward * reward_scale)
 
         return self._next_observation(), reward, done, False, {}
 
-    def _log_step(self, action, reward, done, action_taken=None):
+    def _log_step(self, action, reward, done, action_taken=None, 
+                 networth_change=0, action_reward=0, market_reward=0):
         if not self.save_episodes or self.current_step >= len(self.df):
             return
             
@@ -939,6 +1000,9 @@ class ProTraderEnv(Env):
             'balance': self.balance,
             'networth': networth,
             'reward': reward,
+            'reward_networth': networth_change,
+            'reward_action': action_reward,
+            'reward_market': market_reward,
             'done': done,
             'trade_count': self.trade_count,
             'profitable_trades': self.profitable_trades,

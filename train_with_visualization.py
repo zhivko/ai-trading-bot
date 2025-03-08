@@ -1,6 +1,9 @@
 import os
 import argparse
 import pandas as pd
+# Set matplotlib backend to 'Agg' to avoid Tcl/Tk dependency
+import matplotlib
+matplotlib.use('Agg')  # Must be before importing pyplot
 import matplotlib.pyplot as plt
 from proTradeRL import PPOTrader, ProTraderEnv, CustomActionMaskWrapper, preprocess_data
 from visualize_learning import LearningVisualizer
@@ -28,18 +31,18 @@ def train_with_visualization(data_file, output_dir='training_results',
     env = ProTraderEnv(df, initial_balance=10000, debug=False)
     env = CustomActionMaskWrapper(env)
     
-    # Create agent
-    print("Initializing PPO agent...")
+    # Create agent with improved parameters for technical indicator learning
+    print("Initializing PPO agent with optimized parameters for technical indicators...")
     agent = PPOTrader(
         env=env,
-        hidden_size=512,
-        policy_lr=1e-4,
-        gamma=0.99,
+        hidden_size=512,  # Larger network to capture complex patterns
+        policy_lr=5e-5,   # Lower learning rate for better convergence
+        gamma=0.99,       # High discount factor for long-term rewards
         clip_epsilon=0.2,
-        batch_size=1024,
-        ent_coef=0.01,
+        batch_size=2048,  # Larger batch size for more stable learning
+        ent_coef=0.02,    # Slightly higher entropy for better exploration
         gae_lambda=0.95,
-        sequence_length=10
+        sequence_length=20  # Longer sequence to capture indicator patterns
     )
     
     # Initialize visualizer
@@ -70,6 +73,34 @@ def train_with_visualization(data_file, output_dir='training_results',
         top_features = visualizer.correlate_with_performance('networth', 10)
         print("\nTop features by correlation with net worth:")
         print(top_features)
+        
+        # Get features most influencing action choice
+        action_features = visualizer.calculate_mutual_information('action', 10)
+        print("\nTop features influencing action choice:")
+        print(action_features)
+        
+        # Create feature importance plot for action choice
+        action_importance_file = os.path.join(output_dir, 'action_feature_importance.png')
+        visualizer.plot_feature_importance(method='mutual_info', target='action')
+        plt.savefig(action_importance_file)
+        
+        # Specifically analyze RSI features
+        rsi_features = [f for f in visualizer.episode_data.columns if 'rsi' in f.lower()]
+        print("\nAnalyzing RSI features:")
+        print(rsi_features)
+        
+        for feature in rsi_features:
+            if feature in visualizer.episode_data.columns:
+                print(f"\nAnalyzing RSI feature: {feature}")
+                
+                # Plot feature vs performance
+                feature_file = os.path.join(output_dir, f'feature_{feature}_analysis.png')
+                try:
+                    fig = visualizer.plot_feature_vs_performance(feature, 'networth')
+                    fig.savefig(feature_file)
+                    print(f"Saved {feature_file}")
+                except Exception as e:
+                    print(f"Error plotting {feature}: {e}")
         
         # Visualize top features
         if not top_features.empty:

@@ -6,6 +6,11 @@ numpy
 tqdm
 flask
 
+# Visualization Requirements
+matplotlib
+seaborn
+scikit-learn
+
 # Optional
 python-dotenv
 ollama

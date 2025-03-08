@@ -2,6 +2,9 @@ import os
 import argparse
 import pandas as pd
 import numpy as np
+# Set matplotlib backend to 'Agg' to avoid Tcl/Tk dependency
+import matplotlib
+matplotlib.use('Agg')  # Must be before importing pyplot
 import matplotlib.pyplot as plt
 import seaborn as sns
 from visualize_learning import LearningVisualizer

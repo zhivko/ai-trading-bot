@@ -2,6 +2,9 @@ import os
 import glob
 import pandas as pd
 import numpy as np
+# Set matplotlib backend to 'Agg' to avoid Tcl/Tk dependency
+import matplotlib
+matplotlib.use('Agg')  # Must be before importing pyplot
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.colors import LinearSegmentedColormap
@@ -547,6 +550,24 @@ def main():
     top_mi_features = visualizer.calculate_mutual_information('action', 10)
     print("\nTop features by mutual information with action:")
     print(top_mi_features)
+
+    # Find features that correlate with performance metrics
+    networth_features = visualizer.correlate_with_performance('networth', top_n=10)
+    print("\nTop features influencing net worth:")
+    print(networth_features)
+
+    # Visualize correlation with net worth
+    visualizer.plot_feature_importance(method='correlation', target='networth')
+    plt.savefig('networth_feature_importance.png')
+
+    # Find features that most influence action choice using mutual information
+    action_features = visualizer.calculate_mutual_information(target='action', top_n=10)
+    print("\nTop features influencing action choice:")
+    print(action_features)
+
+    # Visualize these features
+    visualizer.plot_feature_importance(method='mutual_info', target='action')
+    plt.savefig('action_feature_importance.png')
 
 
 if __name__ == "__main__":

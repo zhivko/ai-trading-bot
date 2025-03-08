@@ -29,6 +29,7 @@ def index():
     ohlc_data = []
     trade_events = []
     networth_data = []
+    position_inconsistencies = []
 
     if selected_episode:
         trade_data = pd.read_csv(selected_episode)
@@ -101,8 +102,68 @@ def index():
                 trade_window = trade_data.tail(20)
             
             current_position = 0.0
-            for idx, row in trade_window.iterrows():
+            previous_price = None
+            
+            # Process trades sequentially to detect and fix inconsistent rewards
+            position_type = None
+            entry_price = None
+            entry_time = None
+            position_inconsistencies = []
+            
+            for i, (idx, row) in enumerate(trade_window.iterrows()):
                 action = row["action"].lower().strip()
+                curr_price = float(row["price"])
+                curr_time = row["datetime"]
+                
+                # Get reward values and ensure they're numeric
+                reward_value = pd.to_numeric(row.get("reward", 0), errors='coerce')
+                
+                # Get individual reward components if available
+                reward_networth = pd.to_numeric(row.get("reward_networth", 0), errors='coerce')
+                reward_action = pd.to_numeric(row.get("reward_action", 0), errors='coerce')
+                reward_market = pd.to_numeric(row.get("reward_market", 0), errors='coerce')
+                
+                # Check for position inconsistencies
+                if action in ['buy', 'open long'] and position_type is not None:
+                    inconsistency = f"WARNING: Position inconsistency at {curr_time} - Opening long while {position_type} already open"
+                    print(inconsistency)
+                    position_inconsistencies.append(inconsistency)
+                    # Force close the previous position for visualization clarity
+                    position_type = None
+                
+                if action in ['sell', 'open short'] and position_type is not None:
+                    inconsistency = f"WARNING: Position inconsistency at {curr_time} - Opening short while {position_type} already open"
+                    print(inconsistency)
+                    position_inconsistencies.append(inconsistency)
+                    # Force close the previous position for visualization clarity
+                    position_type = None
+                
+                # Track position entry for later comparison
+                if action in ['buy', 'open long'] and position_type is None:
+                    position_type = 'long'
+                    entry_price = curr_price
+                    entry_time = curr_time
+                elif action in ['sell', 'open short'] and position_type is None:
+                    position_type = 'short'
+                    entry_price = curr_price
+                    entry_time = curr_time
+                
+                # Check for closing a position that doesn't exist
+                if action in ['close_long'] and position_type != 'long':
+                    inconsistency = f"WARNING: Position inconsistency at {curr_time} - Closing long when no long position exists"
+                    print(inconsistency)
+                    position_inconsistencies.append(inconsistency)
+                
+                if action in ['close_short'] and position_type != 'short':
+                    inconsistency = f"WARNING: Position inconsistency at {curr_time} - Closing short when no short position exists"
+                    print(inconsistency)
+                    position_inconsistencies.append(inconsistency)
+                
+                # Reset position tracking after closing
+                if (action in ['close_long'] and position_type == 'long') or (action in ['close_short'] and position_type == 'short'):
+                    position_type = None
+                    entry_price = None
+                
                 if action in ['buy', 'open long']:
                     current_position = abs(float(row.get("quantity", 0)))
                     trade_events.append({
@@ -112,7 +173,10 @@ def index():
                         "quantity": current_position,
                         "networth": row["networth"],
                         "reward_components": {
-                            "total": row.get("reward", 0)
+                            "total": reward_value,
+                            "networth": reward_networth,
+                            "action": reward_action,
+                            "market": reward_market
                         }
                     })
                 elif action in ['sell', 'open short']:
@@ -124,7 +188,10 @@ def index():
                         "quantity": abs(current_position),
                         "networth": row["networth"],
                         "reward_components": {
-                            "total": row.get("reward", 0)
+                            "total": reward_value,
+                            "networth": reward_networth,
+                            "action": reward_action,
+                            "market": reward_market
                         }
                     })
                 elif action in ['close_long', 'close_short']:
@@ -137,7 +204,10 @@ def index():
                         "quantity": quantity,
                         "networth": row["networth"],
                         "reward_components": {
-                            "total": row.get("reward", 0)
+                            "total": reward_value,
+                            "networth": reward_networth,
+                            "action": reward_action,
+                            "market": reward_market
                         }
                     })
                 else:  # 'hold' or unrecognized actions
@@ -148,7 +218,10 @@ def index():
                         "quantity": 0.0,
                         "networth": row["networth"],
                         "reward_components": {
-                            "total": row.get("reward", 0)
+                            "total": reward_value,
+                            "networth": reward_networth,
+                            "action": reward_action,
+                            "market": reward_market
                         }
                     })
                 
@@ -213,6 +286,19 @@ def index():
       </head>
       <body>
         <h1>BTC/USDT Trading Visualization</h1>
+        
+        {% if position_inconsistencies %}
+        <div style="background-color: #ffeeee; border: 1px solid #ffaaaa; padding: 10px; margin-bottom: 15px; border-radius: 4px;">
+          <h3 style="color: #cc0000; margin-top: 0;">Trading Inconsistencies Detected</h3>
+          <ul>
+            {% for inconsistency in position_inconsistencies %}
+              <li style="color: #cc0000;">{{ inconsistency }}</li>
+            {% endfor %}
+          </ul>
+          <p>These inconsistencies may affect the accuracy of trade visualization and analysis.</p>
+        </div>
+        {% endif %}
+        
         <form method="get" onchange="this.submit()">
           Select Episode:
           <select name="episode">
@@ -280,16 +366,25 @@ def index():
 
           var rewardComponents = {
             timestamps: [],
-            total: []
+            total: [],
+            networth: [],
+            action: [],
+            market: []
           };
           
           tradeEvents.forEach(te => {
             rewardComponents.timestamps.push(te.timestamp);
             rewardComponents.total.push(te.reward_components?.total || 0);
+            rewardComponents.networth.push(te.reward_components?.networth || 0);
+            rewardComponents.action.push(te.reward_components?.action || 0);
+            rewardComponents.market.push(te.reward_components?.market || 0);
           });
 
           var rewardTraces = [
-            {name: 'Total Reward', y: rewardComponents.total, line: {color: '#2ca02c', width: 1}}
+            {name: 'Total Reward', y: rewardComponents.total, line: {color: '#2ca02c', width: 2}},
+            {name: 'Networth Change', y: rewardComponents.networth, line: {color: '#1f77b4', width: 1}},
+            {name: 'Action Reward', y: rewardComponents.action, line: {color: '#d62728', width: 1}},
+            {name: 'Market Reward', y: rewardComponents.market, line: {color: '#9467bd', width: 1}}
           ].map(trace => ({
             x: rewardComponents.timestamps,
             y: trace.y,
@@ -300,6 +395,22 @@ def index():
             xaxis: 'x',
             yaxis: 'y3'
           }));
+
+          // Add horizontal reference line at y=0 for rewards subplot
+          var zeroLine = {
+            x: [rewardComponents.timestamps[0], rewardComponents.timestamps[rewardComponents.timestamps.length-1]],
+            y: [0, 0],
+            type: 'scatter',
+            mode: 'lines',
+            name: 'Zero Reference',
+            line: {
+              color: 'rgba(0, 0, 0, 0.5)',
+              width: 1,
+              dash: 'dash'
+            },
+            xaxis: 'x',
+            yaxis: 'y3'
+          };
 
           var combinedData = [
             {
@@ -314,7 +425,8 @@ def index():
             },
             ...tradeTraces,
             traceNetworth,
-            ...rewardTraces
+            ...rewardTraces,
+            zeroLine
           ];
 
           var layout = {
@@ -421,7 +533,8 @@ def index():
                                  next_offset=next_offset,
                                  ohlc_data=ohlc_data,
                                  trade_events=trade_events,
-                                 networth_data=networth_data)
+                                 networth_data=networth_data,
+                                 position_inconsistencies=position_inconsistencies)
 
 if __name__ == "__main__":
     app.run(debug=True)

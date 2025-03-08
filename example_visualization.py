@@ -1,5 +1,8 @@
 import os
 import pandas as pd
+# Set matplotlib backend to 'Agg' to avoid Tcl/Tk dependency
+import matplotlib
+matplotlib.use('Agg')  # Must be before importing pyplot
 import matplotlib.pyplot as plt
 from visualize_learning import LearningVisualizer
 
@@ -67,6 +70,10 @@ def main():
     # 6. Create comprehensive dashboard
     print("\nGenerating comprehensive dashboard...")
     visualizer.create_dashboard(output_file='learning_dashboard.png')
+    
+    # Create a heatmap showing correlations between top features and performance
+    visualizer.plot_feature_heatmap(top_n=10, target='networth')
+    plt.savefig('feature_correlation_heatmap.png')
     
     print("\nVisualization complete! Check the generated PNG files.")
     print("To analyze specific features, you can use the following methods:")
